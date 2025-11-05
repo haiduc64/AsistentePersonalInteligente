@@ -1,45 +1,77 @@
-
+import os
+from dotenv import load_dotenv
+import databases
+import sqlalchemy
 from fastapi import FastAPI
 from pydantic import BaseModel
 import google.generativeai as genai
-import os
 
-# Configuración de la API key de Gemini
-GEMINI_API_KEY = "AIzaSyCxLZnAJLty4yXKE59ztBm5-TptV2VHlGw"
+# Cargar variables de entorno desde un archivo .env (para desarrollo local)
+load_dotenv()
+
+# --- Configuración de API y Base de Datos ---
+
+# Lee la clave de API de Gemini desde las variables de entorno
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 genai.configure(api_key=GEMINI_API_KEY)
 
-app = FastAPI(
-    title="Asistente Personal Inteligente API",
-    description="API para generar listas de la compra inteligentes usando un LLM.",
-    version="0.1.0",
+# Lee la URL de la base de datos desde las variables de entorno
+# Render proporciona esta URL automáticamente
+DATABASE_URL = os.getenv("DATABASE_URL")
+
+# Crea la instancia de la base de datos y el motor de SQLAlchemy
+database = databases.Database(DATABASE_URL)
+metadata = sqlalchemy.MetaData()
+
+# Define la tabla para guardar las listas de la compra
+listas_compra = sqlalchemy.Table(
+    "listas_compra",
+    metadata,
+    sqlalchemy.Column("id", sqlalchemy.Integer, primary_key=True),
+    sqlalchemy.Column("recetas", sqlalchemy.String),
+    sqlalchemy.Column("ingredientes_disponibles", sqlalchemy.String),
+    sqlalchemy.Column("lista_generada", sqlalchemy.Text),
 )
 
-# Modelo de datos para las recetas que la app enviará al backend
+engine = sqlalchemy.create_engine(DATABASE_URL)
+metadata.create_all(engine)
+
+# --- Modelos de Datos Pydantic (para la API) ---
+
 class RecetasInput(BaseModel):
     nombres_recetas: list[str]
     ingredientes_disponibles: list[str] = []
 
-# Modelo de datos para la respuesta que el backend enviará a la app
 class ListaCompraOutput(BaseModel):
     lista_compra: str
 
+# --- Aplicación FastAPI ---
+
+app = FastAPI(
+    title="Asistente Personal Inteligente API",
+    description="API para generar y guardar listas de la compra inteligentes.",
+    version="1.0.0",
+)
+
+# Eventos de inicio y fin de la aplicación
+@app.on_event("startup")
+async def startup():
+    await database.connect()
+
+@app.on_event("shutdown")
+async def shutdown():
+    await database.disconnect()
+
+# --- Endpoints de la API ---
+
 @app.get("/")
 def read_root():
-    """Endpoint de bienvenida para verificar que el servidor está funcionando."""
     return {"mensaje": "Bienvenido a la API de Asistente Personal Inteligente"}
 
 @app.post("/generar-lista-compra/", response_model=ListaCompraOutput)
 async def generar_lista_compra(recetas_input: RecetasInput):
-    """
-    Endpoint principal que recibe recetas y devuelve una lista de la compra.
-    (Actualmente es un placeholder y no llama a la IA)
-    """
-    
-    # 1. Configurar el modelo de IA
-    # La API key se configura al inicio de la aplicación
     model = genai.GenerativeModel('models/gemini-pro-latest')
 
-    # 2. Crear el prompt para el modelo
     prompt = f"""
     Eres un asistente de cocina experto. Tu tarea es crear una lista de compras detallada.
 
@@ -55,18 +87,26 @@ async def generar_lista_compra(recetas_input: RecetasInput):
     No incluyas los nombres de las recetas en la lista final, solo los ingredientes a comprar.
     """
 
-    # 3. Llamar a la API de Gemini
     try:
         response = model.generate_content(prompt)
         lista_generada = response.text
+
+        # Guardar en la base de datos
+        query = listas_compra.insert().values(
+            recetas=", ".join(recetas_input.nombres_recetas),
+            ingredientes_disponibles=", ".join(recetas_input.ingredientes_disponibles),
+            lista_generada=lista_generada
+        )
+        await database.execute(query)
+
     except Exception as e:
-        print(f"Error al contactar la API de Gemini: {e}")
-        # Devolver un error 500 o un mensaje indicando el problema
-        return {"lista_compra": "Error: No se pudo generar la lista de la compra. Verifica la configuración de la API."}
+        print(f"Error al contactar la API de Gemini o la base de datos: {e}")
+        return {"lista_compra": "Error: No se pudo generar la lista de la compra."}
 
-
-    # 4. Devolver la respuesta generada por la IA
     return {"lista_compra": lista_generada}
 
-# Para ejecutar el servidor, usa el comando en tu terminal:
-# uvicorn main:app --reload
+@app.get("/listas")
+async def obtener_listas_guardadas():
+    """Endpoint para ver todas las listas de la compra guardadas."""
+    query = listas_compra.select()
+    return await database.fetch_all(query)

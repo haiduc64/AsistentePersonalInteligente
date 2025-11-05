@@ -2,3 +2,6 @@ fastapi
 uvicorn[standard]
 google-generativeai
 psycopg2-binary
+databases[postgresql]
+SQLAlchemy
+python-dotenv
