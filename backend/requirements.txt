@@ -1,0 +1,4 @@
+fastapi
+uvicorn[standard]
+google-generativeai
+psycopg2-binary
