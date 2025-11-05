@@ -105,6 +105,36 @@ async def generar_lista_compra(recetas_input: RecetasInput):
 
     return {"lista_compra": lista_generada}
 
+
+class SugerenciaInput(BaseModel):
+    ingredientes_disponibles: list[str] = []
+
+class SugerenciaOutput(BaseModel):
+    recetas_sugeridas: str
+
+@app.post("/sugerir-receta/", response_model=SugerenciaOutput)
+async def sugerir_receta(sugerencia_input: SugerenciaInput):
+    model = genai.GenerativeModel('models/gemini-pro-latest')
+
+    ingredientes_texto = ", ".join(sugerencia_input.ingredientes_disponibles) if sugerencia_input.ingredientes_disponibles else "ninguno"
+
+    prompt = f"""
+    Eres un asistente de cocina creativo.
+    Basado en los siguientes ingredientes que el usuario ya tiene: {ingredientes_texto}.
+
+    Sugiere una o dos recetas sencillas y deliciosas que se puedan preparar con esos ingredientes (se pueden añadir otros ingredientes comunes).
+    Devuelve únicamente los nombres de las recetas, separados por comas. Por ejemplo: "Tortilla de patatas, Pollo al ajillo".
+    No añadas explicaciones ni texto adicional, solo los nombres.
+    """
+
+    try:
+        response = model.generate_content(prompt)
+        return {"recetas_sugeridas": response.text}
+    except Exception as e:
+        print(f"Error al contactar la API de Gemini: {e}")
+        return {"recetas_sugeridas": "Error al generar sugerencia."}
+
+
 @app.get("/listas")
 async def obtener_listas_guardadas():
     """Endpoint para ver todas las listas de la compra guardadas."""

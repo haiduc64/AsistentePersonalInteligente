@@ -80,7 +80,7 @@ class MainViewModel : ViewModel() {
                 )
 
                 // Hacemos la petición POST a la IP de tu ordenador
-                val response: ListaCompraOutput = client.post("http://192.168.1.165:8000/generar-lista-compra/") {
+                val response: ListaCompraOutput = client.post("https://asistentepersonalinteligente.onrender.com/generar-lista-compra/") {
                     contentType(ContentType.Application.Json)
                     setBody(datosParaElBackend)
                 }.body()
