@@ -111,7 +111,7 @@ class SugerenciaInput(BaseModel):
     ingredientes_disponibles: list[str] = []
 
 class SugerenciaOutput(BaseModel):
-    recetas_sugeridas: str
+    recetas_sugeridas: list[str] # Cambiado de str a list[str]
 
 @app.post("/sugerir-receta/", response_model=SugerenciaOutput)
 async def sugerir_receta(sugerencia_input: SugerenciaInput):
@@ -130,10 +130,12 @@ async def sugerir_receta(sugerencia_input: SugerenciaInput):
 
     try:
         response = model.generate_content(prompt)
-        return {"recetas_sugeridas": response.text}
+        # Procesamos el texto para convertirlo en una lista limpia
+        lista_recetas = [receta.strip() for receta in response.text.split(',')]
+        return {"recetas_sugeridas": lista_recetas}
     except Exception as e:
         print(f"Error al contactar la API de Gemini: {e}")
-        return {"recetas_sugeridas": "Error al generar sugerencia."}
+        return {"recetas_sugeridas": ["Error al generar sugerencia."]}
 
 
 @app.get("/listas")
