@@ -71,7 +71,7 @@ def read_root():
 
 @app.post("/generar-lista-compra/", response_model=ListaCompraOutput)
 async def generar_lista_compra(recetas_input: RecetasInput):
-    model = genai.GenerativeModel('models/gemini-pro-latest')
+    model = genai.GenerativeModel('gemini-pro')
 
     prompt = f"""
     Eres un asistente de cocina experto. Tu tarea es crear una lista de compras detallada.
@@ -115,7 +115,7 @@ class SugerenciaOutput(BaseModel):
 
 @app.post("/sugerir-receta/", response_model=SugerenciaOutput)
 async def sugerir_receta(sugerencia_input: SugerenciaInput):
-    model = genai.GenerativeModel('models/gemini-pro-latest')
+    model = genai.GenerativeModel('gemini-pro')
 
     ingredientes_texto = ", ".join(sugerencia_input.ingredientes_disponibles) if sugerencia_input.ingredientes_disponibles else "ninguno"
 

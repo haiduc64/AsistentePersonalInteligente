@@ -6,6 +6,7 @@ plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.serialization")
+    id("org.jetbrains.kotlin.plugin.compose")
 }
 
 android {
@@ -25,7 +26,7 @@ android {
     }
     
     composeOptions {
-        kotlinCompilerExtensionVersion = "1.5.1"
+        // kotlinCompilerExtensionVersion = "1.5.15"
     }
 
     compileOptions {
@@ -52,7 +53,7 @@ dependencies {
     implementation("androidx.activity:activity-compose:1.8.0")
 
     // Ktor para networking
-    val ktorVersion = "2.3.7"
+    val ktorVersion = "3.3.2"
     implementation("io.ktor:ktor-client-core:$ktorVersion")
     implementation("io.ktor:ktor-client-cio:$ktorVersion")
     implementation("io.ktor:ktor-client-content-negotiation:$ktorVersion")

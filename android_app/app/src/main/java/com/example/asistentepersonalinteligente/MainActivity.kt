@@ -7,15 +7,11 @@ import androidx.activity.viewModels
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Button
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
+import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -31,7 +27,16 @@ import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
 
 // --- 1. Modelos de Datos (deben coincidir con el backend) ---
-// Marcados con @Serializable para que Ktor sepa cómo convertirlos a JSON.
+
+@Serializable
+data class SugerenciaInput(
+    val ingredientes_disponibles: List<String> = emptyList()
+)
+
+@Serializable
+data class SugerenciaOutput(
+    val recetas_sugeridas: List<String> // Cambiado a Lista de Strings
+)
 
 @Serializable
 data class RecetasInput(
@@ -48,29 +53,47 @@ data class ListaCompraOutput(
 
 class MainViewModel : ViewModel() {
 
-    // El estado de la UI: el texto a mostrar y si estamos cargando.
     var uiState by mutableStateOf<UiState>(UiState.Idle)
         private set
 
-    // Creamos el cliente HTTP de Ktor. Se reutilizará en toda la app.
     private val client = HttpClient(CIO) {
         install(ContentNegotiation) {
             json()
         }
         install(HttpTimeout) {
-            requestTimeoutMillis = 60000
+            requestTimeoutMillis = 120000 // Timeout de 120 segundos
         }
     }
 
-    // Función para llamar al backend
-    fun generarListaCompra(recetasStr: String, ingredientesStr: String) {
-        // Ponemos la UI en estado de carga
-        uiState = UiState.Loading
-
-        // Lanzamos una corrutina para no bloquear el hilo principal de la UI
+    fun sugerirRecetas(ingredientesStr: String) {
+        uiState = UiState.LoadingSugerencias
         viewModelScope.launch {
             try {
-                // Convertimos los strings de entrada en listas, separando por comas y quitando espacios.
+                val listaIngredientes = ingredientesStr.split(',').map { it.trim() }.filter { it.isNotBlank() }
+                val datosParaElBackend = SugerenciaInput(ingredientes_disponibles = listaIngredientes)
+
+                val response: SugerenciaOutput = client.post("https://asistentepersonalinteligente.onrender.com/sugerir-receta/") {
+                    contentType(ContentType.Application.Json)
+                    setBody(datosParaElBackend)
+                }.body()
+
+                uiState = UiState.SugerenciasSuccess(response.recetas_sugeridas)
+            } catch (e: Exception) {
+                uiState = UiState.Error(e.message ?: "Error desconocido al sugerir recetas")
+            }
+        }
+    }
+
+    fun generarListaCompra(recetasStr: String, ingredientesStr: String) {
+        val sugerenciasAnteriores = (uiState as? UiState.SugerenciasSuccess)?.sugerencias
+            ?: (uiState as? UiState.LoadingLista)?.sugerenciasAnteriores
+            ?: (uiState as? UiState.ListaSuccess)?.sugerencias
+            ?: emptyList()
+
+        uiState = UiState.LoadingLista(sugerenciasAnteriores)
+
+        viewModelScope.launch {
+            try {
                 val listaRecetas = recetasStr.split(',').map { it.trim() }.filter { it.isNotBlank() }
                 val listaIngredientes = ingredientesStr.split(',').map { it.trim() }.filter { it.isNotBlank() }
 
@@ -79,23 +102,22 @@ class MainViewModel : ViewModel() {
                     ingredientes_disponibles = listaIngredientes
                 )
 
-                // Hacemos la petición POST a la IP de tu ordenador
                 val response: ListaCompraOutput = client.post("https://asistentepersonalinteligente.onrender.com/generar-lista-compra/") {
                     contentType(ContentType.Application.Json)
                     setBody(datosParaElBackend)
                 }.body()
 
-                // Actualizamos la UI con la respuesta del servidor
-                uiState = UiState.Success(response.lista_compra)
-
+                uiState = UiState.ListaSuccess(sugerenciasAnteriores, response.lista_compra)
             } catch (e: Exception) {
-                // Si algo falla, actualizamos la UI con el mensaje de error
-                uiState = UiState.Error(e.message ?: "Error desconocido")
+                uiState = UiState.Error(e.message ?: "Error desconocido al generar la lista")
             }
         }
     }
 
-    // Limpiar el cliente cuando el ViewModel se destruye
+    fun resetUiState() {
+        uiState = UiState.Idle
+    }
+
     override fun onCleared() {
         super.onCleared()
         client.close()
@@ -103,20 +125,18 @@ class MainViewModel : ViewModel() {
 }
 
 // --- 3. Estados de la UI ---
-// Una clase para representar los diferentes estados posibles de la pantalla
-
 sealed class UiState {
-    object Idle : UiState() // Estado inicial
-    object Loading : UiState() // Cargando
-    data class Success(val data: String) : UiState() // Éxito con datos
-    data class Error(val message: String) : UiState() // Error con mensaje
+    object Idle : UiState()
+    object LoadingSugerencias : UiState()
+    data class SugerenciasSuccess(val sugerencias: List<String>) : UiState() // Cambiado a Lista
+    data class LoadingLista(val sugerenciasAnteriores: List<String>) : UiState() // Cambiado a Lista
+    data class ListaSuccess(val sugerencias: List<String>, val listaCompra: String) : UiState() // Cambiado a Lista
+    data class Error(val message: String) : UiState()
 }
-
 
 // --- 4. Actividad Principal y UI con Jetpack Compose ---
 
 class MainActivity : ComponentActivity() {
-    // Obtenemos una instancia de nuestro ViewModel
     private val viewModel: MainViewModel by viewModels()
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -124,12 +144,11 @@ class MainActivity : ComponentActivity() {
         setContent {
             MaterialTheme {
                 Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-                    // Pasamos el estado y la función de click al Composable principal
                     PantallaPrincipal(
                         uiState = viewModel.uiState,
-                        onGenerateClick = { recetas, ingredientes ->
-                            viewModel.generarListaCompra(recetas, ingredientes)
-                        }
+                        onSuggestClick = { ingredientes -> viewModel.sugerirRecetas(ingredientes) },
+                        onGenerateClick = { recetas, ingredientes -> viewModel.generarListaCompra(recetas, ingredientes) },
+                        onResetClick = { viewModel.resetUiState() }
                     )
                 }
             }
@@ -137,65 +156,139 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class) // Anotación para FlowRow
 @Composable
-fun PantallaPrincipal(uiState: UiState, onGenerateClick: (String, String) -> Unit) {
-    // Estados para guardar el texto de los campos de entrada
-    var recetasInput by remember { mutableStateOf("") }
+fun PantallaPrincipal(
+    uiState: UiState,
+    onSuggestClick: (String) -> Unit,
+    onGenerateClick: (String, String) -> Unit,
+    onResetClick: () -> Unit
+) {
     var ingredientesInput by remember { mutableStateOf("") }
+    var recetasInput by remember { mutableStateOf("") }
+
+    val isLoading = uiState is UiState.LoadingSugerencias || uiState is UiState.LoadingLista
 
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(16.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
+            .padding(16.dp)
+            .verticalScroll(rememberScrollState()),
+        horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        // Mostramos el resultado (o el estado actual) en la parte superior
-        when (uiState) {
-            is UiState.Idle -> {
-                Text(text = "Introduce tus recetas e ingredientes.")
-            }
-            is UiState.Loading -> {
-                CircularProgressIndicator()
-            }
-            is UiState.Success -> {
-                // Para mostrar la lista de la compra, que puede ser larga, la ponemos en un scroll
-                Column(modifier = Modifier.weight(1f).verticalScroll(rememberScrollState())) {
-                    Text(text = uiState.data)
+        Text("Asistente de Compra Inteligente", style = MaterialTheme.typography.headlineSmall)
+        Spacer(modifier = Modifier.height(24.dp))
+
+        OutlinedTextField(
+            value = ingredientesInput,
+            onValueChange = { ingredientesInput = it },
+            label = { Text("Ingredientes que ya tienes (separados por comas)") },
+            modifier = Modifier.fillMaxWidth()
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+        Button(
+            onClick = { onSuggestClick(ingredientesInput) },
+            enabled = !isLoading
+        ) {
+            Text("1. Sugerir Recetas")
+        }
+        Spacer(modifier = Modifier.height(16.dp))
+
+        // --- Área de Resultados ---
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f),
+            contentAlignment = Alignment.Center
+        ) {
+            when (uiState) {
+                is UiState.Idle -> {
+                    Text("Introduce tus ingredientes para empezar.", textAlign = TextAlign.Center)
                 }
-            }
-            is UiState.Error -> {
-                Text(text = "Error: ${uiState.message}", color = MaterialTheme.colorScheme.error)
+                is UiState.LoadingSugerencias -> {
+                    CircularProgressIndicator(modifier = Modifier.size(48.dp))
+                    Text("Buscando recetas...", modifier = Modifier.padding(top = 64.dp))
+                }
+                is UiState.SugerenciasSuccess -> {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text("Recetas Sugeridas:", style = MaterialTheme.typography.titleMedium)
+                        Spacer(modifier = Modifier.height(8.dp))
+                        // Usamos FlowRow para que los botones se ajusten y pasen a la siguiente línea si no caben
+                        FlowRow(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            uiState.sugerencias.forEach { receta ->
+                                TextButton(onClick = { recetasInput = receta }) {
+                                    Text(receta)
+                                }
+                            }
+                        }
+                    }
+                }
+                is UiState.LoadingLista -> {
+                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text("Recetas Sugeridas:", style = MaterialTheme.typography.titleMedium)
+                        Text(uiState.sugerenciasAnteriores.joinToString(", "))
+                        Spacer(modifier = Modifier.height(16.dp))
+                        CircularProgressIndicator(modifier = Modifier.size(48.dp))
+                        Text("Generando lista de la compra...", modifier = Modifier.padding(top = 64.dp))
+                    }
+                }
+                is UiState.ListaSuccess -> {
+                    Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text("Recetas Sugeridas:", style = MaterialTheme.typography.titleMedium)
+                            Text(uiState.sugerencias.joinToString(", "))
+                            Divider(modifier = Modifier.padding(vertical = 8.dp))
+                            Text("Lista de la Compra:", style = MaterialTheme.typography.titleMedium)
+                            Text(uiState.listaCompra)
+                        }
+                    }
+                }
+                is UiState.Error -> {
+                    Column(
+                        modifier = Modifier.padding(8.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Text(
+                            "¡Ha Ocurrido un Error!",
+                            style = MaterialTheme.typography.headlineSmall,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text("Detalles del error:", style = MaterialTheme.typography.titleMedium)
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(uiState.message)
+                    }
+                }
             }
         }
 
         Spacer(modifier = Modifier.height(16.dp))
 
-        // Campos de texto para la entrada del usuario
         OutlinedTextField(
             value = recetasInput,
             onValueChange = { recetasInput = it },
-            label = { Text("Recetas (separadas por comas)") },
-            modifier = Modifier.fillMaxWidth()
+            label = { Text("Escribe la receta elegida") },
+            modifier = Modifier.fillMaxWidth(),
+            enabled = !isLoading
         )
-
         Spacer(modifier = Modifier.height(8.dp))
-
-        OutlinedTextField(
-            value = ingredientesInput,
-            onValueChange = { ingredientesInput = it },
-            label = { Text("Ingredientes que ya tienes (opcional)") },
-            modifier = Modifier.fillMaxWidth()
-        )
-
-        Spacer(modifier = Modifier.height(32.dp))
-
-        // Botón para enviar los datos al ViewModel
         Button(
             onClick = { onGenerateClick(recetasInput, ingredientesInput) },
-            enabled = uiState !is UiState.Loading
+            enabled = !isLoading && recetasInput.isNotBlank()
         ) {
-            Text("Generar Lista")
+            Text("2. Generar Lista de la Compra")
+        }
+        Spacer(modifier = Modifier.height(16.dp))
+
+        Button(
+            onClick = onResetClick,
+            enabled = !isLoading && uiState !is UiState.Idle
+        ) {
+            Text("Empezar de Nuevo")
         }
     }
 }
